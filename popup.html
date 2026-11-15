@@ -1,0 +1,122 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Tidy Watch Later</title>
+<link rel="stylesheet" href="lib/pico.min.css">
+<link rel="stylesheet" href="popup.css">
+<nav class="tabs" role="tablist">
+  <button role="tab" class="icon" data-tab="home" aria-selected="true" aria-label="Home" title="Home"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h5v-6h4v6h5V10"/></svg></button>
+  <button role="tab" data-tab="tag" aria-selected="false">Tagging</button>
+  <button role="tab" data-tab="ai" aria-selected="false">AI Filter</button>
+  <button role="tab" data-tab="remove" aria-selected="false">Delete Watched</button>
+  <button role="tab" data-tab="bytag" aria-selected="false">Delete by Tag</button>
+  <button role="tab" class="icon" data-tab="settings" aria-selected="false" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+</nav>
+
+<main>
+<section id="tab-home">
+  <h2 class="home-title">Tidy Watch Later</h2>
+  <div class="warn" id="pageWarn" role="alert" hidden>
+    <p><b>You're not on your Watch Later page.</b> The tools only work on youtube.com/playlist?list=WL.</p>
+    <button type="button" id="openWL">Open Watch Later</button>
+  </div>
+  <p class="desc">Tidy your YouTube Watch Later list: delete videos you have already watched, tag videos from their titles with your own AI model, and bulk-delete by tag. Open your Watch Later playlist, then pick a tool.</p>
+  <button type="button" class="card outline secondary" data-go="tag"><b>Tagging</b><small>Label each video with tags using your AI model</small></button>
+  <button type="button" class="card outline secondary" data-go="ai"><b>AI Filter</b><small>Describe what you want; show only the best matches</small></button>
+  <button type="button" class="card outline secondary" data-go="remove"><b>Delete Watched</b><small>Remove videos watched past a percentage</small></button>
+  <button type="button" class="card outline secondary" data-go="bytag"><b>Delete by Tag</b><small>Remove every video that carries chosen tags</small></button>
+  <p class="status" id="homeStatus"></p>
+</section>
+
+<section id="tab-ai" hidden>
+  <p class="desc">Describe what you want to watch. Your model scores each video on its title, channel, duration, views and age, and how much you have watched, and only the best matches stay visible on the page. Scoring starts at the top of the list.</p>
+  <label for="aiQuery">What are you looking for?</label>
+  <textarea id="aiQuery" rows="3" placeholder="e.g. short beginner-friendly Rust tutorials"></textarea>
+  <label for="aiMin">Match at least <b><span id="aiMinVal">60</span>%</b> <small>updates the page live</small></label>
+  <input type="range" id="aiMin" min="1" max="100" value="60">
+  <label>Limit <small>stop after N matching videos, 0 = scan the whole list</small>
+    <input type="number" id="aiLimit" min="0" value="10"></label>
+  <p class="status" id="aiStatus" aria-live="polite"></p>
+  <progress id="aiBar" hidden></progress>
+  <pre class="err" id="aiErr" hidden></pre>
+  <button id="aiGo">Find videos</button>
+  <button id="aiStop" class="secondary" hidden>Stop</button>
+  <button id="aiClear" class="outline secondary">Show all videos</button>
+</section>
+
+<section id="tab-remove" hidden>
+  <p class="desc">Removes videos from your Watch Later list that you have already watched past the percentage you pick. It works through the list in chunks, pausing to load more videos, and stops at your limit or the end of the list. Open your Watch Later playlist first.</p>
+  <label for="n">Remove videos watched ≥ <b><span id="val">80</span>%</b></label>
+  <input type="range" id="n" min="1" max="100" value="80">
+  <label>Limit <small>max videos to remove, 0 = all</small>
+    <input type="number" id="rlimit" min="0" value="10"></label>
+  <p class="status" id="status" aria-live="polite">Open your Watch Later playlist, then move the slider.</p>
+  <progress id="rbar" hidden></progress>
+  <button id="go" disabled>Remove watched videos</button>
+  <button id="stop" class="secondary" hidden>Stop</button>
+</section>
+
+<section id="tab-tag" hidden>
+  <p class="desc">Uses your AI model to tag each video from its title and channel. Add your tags below; every video gets the tags that fit best, shown as small labels on the page with a filter bar at the top right. Only untagged videos are processed unless you tick re-tag.</p>
+  <label for="tagInput">Tags</label>
+  <div class="chips" id="chips"></div>
+  <input type="text" id="tagInput" placeholder="Type a tag, press Enter" autocomplete="off">
+  <label>Limit <small>max videos to tag per run, 0 = all</small>
+    <input type="number" id="tagLimit" min="0" value="10"></label>
+  <div class="row">
+    <label>Max tags per video
+      <input type="number" id="tagMax" min="1" max="10" value="3"></label>
+    <label>Min probability <small>0–1</small>
+      <input type="number" id="tagMin" min="0" max="1" step="0.05" value="0.5"></label>
+  </div>
+  <label class="check"><input type="checkbox" id="tagRegen"> Re-tag videos that already have a tag</label>
+  <p class="status" id="tagStatus" aria-live="polite"></p>
+  <progress id="tagBar" hidden></progress>
+  <pre class="err" id="tagErr" hidden></pre>
+  <button id="tagGo">Tag videos</button>
+  <button id="tagStop" class="secondary" hidden>Stop</button>
+  <button id="tagClear" class="outline secondary">Clear all saved tags</button>
+</section>
+
+<section id="tab-bytag" hidden>
+  <p class="desc">Removes videos from your Watch Later list based on the tags you generated in the Tag tab. Pick one or more tags: every video carrying any of them is removed. Only tagged videos can be matched, so run the Tag tab first.</p>
+  <label>Remove videos tagged <small>select one or more</small></label>
+  <div class="chips" id="tagPick"></div>
+  <label>Limit <small>max videos to remove, 0 = all</small>
+    <input type="number" id="btlimit" min="0" value="10"></label>
+  <p class="status" id="btStatus" aria-live="polite"></p>
+  <progress id="btBar" hidden></progress>
+  <button id="btGo" disabled>Remove tagged videos</button>
+  <button id="btStop" class="secondary" hidden>Stop</button>
+</section>
+
+<section id="tab-settings" hidden>
+  <p class="desc">Connects the extension to your Systemone endpoint, which scores each video against your tags. Enter the endpoint URL and model name. Everything is stored only in this browser, and video titles and channel names are sent to this endpoint when tagging.</p>
+  <label for="base">Endpoint base URL</label>
+  <input type="text" id="base" placeholder="http://localhost:11434/v1">
+  <label for="model">Model</label>
+  <input type="text" id="model" placeholder="model name, e.g. d3:2b">
+  <label for="key">API key <small>optional for local</small></label>
+  <input type="password" id="key" placeholder="sk-…" autocomplete="off">
+  <button id="testConn" class="outline">Test connection</button>
+  <p class="status" id="testStatus" aria-live="polite"></p>
+  <pre class="err" id="testErr" hidden></pre>
+  <p class="status" id="keyStatus" aria-live="polite"></p>
+  <button id="saveSettings">Save</button>
+
+  <div class="info" id="corsInfo" hidden>
+    <b>Test failing, or "Failed to fetch" / 403?</b>
+    <p>Your server has to allow requests coming from this extension. In your provider's CORS settings, add this allowed origin (or <code>chrome-extension://*</code> for any extension):</p>
+    <p><code id="origin"></code> <button type="button" id="copyOrigin" class="outline secondary mini">Copy</button></p>
+    <p>Ollama: set <code>OLLAMA_ORIGINS="chrome-extension://*"</code> and restart it. If the server runs on another machine, it also has to listen on the network (for Ollama, <code>OLLAMA_HOST=0.0.0.0</code>).</p>
+  </div>
+
+  <div class="about">
+    <span>Version <b id="ver"></b></span>
+    <a id="ghLink" target="_blank" rel="noopener noreferrer">GitHub</a>
+    <a id="donateLink" target="_blank" rel="noopener noreferrer">Donate ♥</a>
+  </div>
+</section>
+</main>
+
+<script src="remove.js"></script>
+<script src="tabs.js"></script>
