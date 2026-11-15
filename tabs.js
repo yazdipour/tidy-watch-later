@@ -195,7 +195,7 @@ function renderPick() {
   const n = matchIds().length;
   q("btGo").disabled = n === 0;
   q("btStatus").textContent = names.length ? (n ? `${n} video${n > 1 ? "s" : ""} match the selected tags.` : "Select the tags to remove.")
-    : "No tagged videos yet. Run the Tag tab first.";
+    : "No tagged videos yet. Run the Tagging tab first.";
 }
 chrome.storage.onChanged.addListener((c) => { if (c.vidTags) { vt = c.vidTags.newValue || {}; renderPick(); } if (c.vidTags || c.base || c.model) renderHome(); });
 

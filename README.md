@@ -3,6 +3,10 @@
 [![test](https://github.com/yazdipour/tidy-watch-later/actions/workflows/test.yml/badge.svg)](https://github.com/yazdipour/tidy-watch-later/actions/workflows/test.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+<p align="center">
+  <img src="screenshots/01-home.png" alt="Tidy Watch Later on a YouTube Watch Later page: the popup's Home tab, with tag chips on each video" width="900">
+</p>
+
 A Chrome extension that tidies your YouTube **Watch Later** playlist. Delete what you've already watched, tag videos with **your own AI model**, filter the list by meaning, and bulk-delete by tag.
 
 Nothing goes to a third party: the AI features talk only to the endpoint **you** configure (a local server works great), and there is no analytics or telemetry.
@@ -74,6 +78,8 @@ The extension calls `POST {base}/systemone` with one yes/no question per item:
 **Question limits are discovered, not assumed.** If the server rejects a request for having too many questions (for example `questions must contain 1–64 fields`), the extension reads the limit from the error, re-plans only the unsent work, and caches the limit per endpoint and model. If the message has no number it halves the batch until it fits. Network errors, 429s and 5xx responses are retried for the failing batch only. A video whose answers only partly arrived is never saved, so a re-run retries it.
 
 ## Privacy
+
+Full policy: [PRIVACY.md](PRIVACY.md). In short:
 
 - **What is sent, and where:** video titles, channel names, durations, the "views • age" text, how much of each video you watched, and list positions go to **the endpoint you configured**, and nowhere else.
 - **What is stored:** your settings, tags and scores, in `chrome.storage.local` in your browser. Your API key (if you set one) is stored the same way, unencrypted. Don't reuse a valuable key.
