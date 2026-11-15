@@ -6,3 +6,6 @@ node_modules/
 # release artifacts
 *.zip
 dist/
+
+# browser-automation scratch (contains account details)
+.playwright-mcp/
