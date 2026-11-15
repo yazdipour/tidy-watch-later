@@ -114,8 +114,9 @@ q("testConn").addEventListener("click", async () => {
 
 // ---- about + CORS info
 const GITHUB_URL = "https://github.com/yazdipour/tidy-watch-later";
-const DONATE_URL = "";  // TODO: your donation link
+const DONATE_URL = "https://github.com/sponsors/yazdipour";
 q("ver").textContent = chrome.runtime.getManifest().version;
+q("verLink").href = GITHUB_URL + "/releases";
 for (const [id, url] of [["ghLink", GITHUB_URL], ["donateLink", DONATE_URL]]) {
   if (url) q(id).href = url; else { q(id).setAttribute("aria-disabled", "true"); q(id).title = "Link not configured yet"; }
 }
