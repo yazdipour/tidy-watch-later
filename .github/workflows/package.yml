@@ -1,0 +1,28 @@
+name: package
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+']
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm test
+
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Bad tag: $VERSION"; exit 1; }
+          npm pkg set version="$VERSION"
+          node -e "const fs=require('fs');const m=JSON.parse(fs.readFileSync('manifest.json'));m.version=process.argv[1];fs.writeFileSync('manifest.json',JSON.stringify(m,null,2)+'\n')" "$VERSION"
+
+      - name: Package
+        run: zip -r "tidy-watch-later-${GITHUB_REF_NAME}.zip" manifest.json *.js *.css popup.html icons lib
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tidy-watch-later-${{ github.ref_name }}
+          path: tidy-watch-later-*.zip
