@@ -13,7 +13,11 @@ function server({ limit = Infinity, p = () => 0.9, fail = () => null } = {}) {
     requests.push(spec);
     const f = fail(spec, requests.length); if (f) throw f;
     if (spec.questions.length > limit) throw httpErr(400, `{"error":"questions must contain 1–${limit} fields"}`);
-    return Object.fromEntries(spec.questions.map((q) => { const { id, t } = T.parseName(q.name); return [q.name, p(id, t)]; }));
+    return Object.fromEntries(spec.questions.map((q) => {
+      const { id, t } = T.parseName(q.name);
+      if (!q.criteria) return [q.name, p(id, t)];
+      return [q.name, Object.fromEntries(Object.keys(q.criteria).map((k) => [k, k === "none" ? 0 : p(id, +k.slice(1))]))]; // choice: p per tag
+    }));
   };
   return { send, requests };
 }
@@ -44,23 +48,21 @@ test("planBatches never loops on bad caps", () => {
   assert.equal(T.planBatches(T.makePairs(vids(3), 2), 0).length, 6); // clamps to 1
 });
 
-test("buildBatch describes each video once, only videos in the batch, one question per pair", () => {
+test("buildBatch: one choice question per video, tags as criteria plus none", () => {
   const vs = vids(3), byId = Object.fromEntries(vs.map((v) => [v.id, v]));
-  const batch = [{ id: vs[0].id, t: 0 }, { id: vs[0].id, t: 1 }, { id: vs[1].id, t: 0 }];
+  const batch = [{ id: vs[0].id, t: 0 }, { id: vs[1].id, t: 0 }];
   const spec = T.buildBatch(batch, byId, ["music", "news"]);
-  assert.equal(spec.questions.length, 3);
-  assert.equal(spec.text.split(vs[0].title).length - 1, 1); // described once despite two questions
-  assert.ok(!spec.text.includes(vs[2].title));              // not in this batch
-  assert.ok(!spec.text.includes("music"));                  // tag names live only in the questions
-  assert.ok(spec.questions[0].instructions.includes('"music"'));
-  assert.ok(!spec.text.includes(vs[0].id) && !spec.questions[0].instructions.includes(vs[0].id)); // short labels, not ids
-  assert.equal(T.parseName(spec.questions[2].name).id, vs[1].id);                                  // names still map to real ids
-  assert.ok(spec.questions[2].instructions.startsWith("[1]"));
+  assert.equal(spec.questions.length, 2);
+  assert.ok(spec.questions[0].instructions.includes(vs[0].title) && spec.questions[0].instructions.includes(vs[0].channel));
+  assert.deepEqual(spec.questions[0].criteria, { t0: "music", t1: "news", none: "None of these tags fit" });
+  assert.ok(!JSON.stringify(spec).includes(vs[2].title)); // not in this batch
+  assert.ok(!spec.questions[0].instructions.includes(vs[0].id)); // titles, not ids
+  assert.equal(T.parseName(spec.questions[1].name).id, vs[1].id);
 });
 
 test("buildBatch flattens newlines in titles", () => {
   const spec = T.buildBatch([{ id: "x", t: 0 }], { x: { id: "x", title: "a\nb\n\nc", channel: "d\ne" } }, ["t"]);
-  assert.ok(spec.text.includes("a b c by d e"));
+  assert.ok(spec.questions[0].instructions.includes('"a b c" by d e'));
 });
 
 // ---------- limit detection ----------
@@ -93,7 +95,8 @@ test("nextCap: exact limit, halving fallback, and non-limit errors", () => {
 // ---------- runBatches: discovery, adaptation, caching signal ----------
 test("discovers the limit from the error, re-plans, and reports the new cap", async () => {
   const s = server({ limit: 64 });
-  const r = await T.runBatches({ pairs: T.makePairs(vids(10), 7), cap: 400, send: (b) => s.send(T.buildBatch(b, Object.fromEntries(vids(10).map((v) => [v.id, v])), Array(7).fill("t"))), sleep: noSleep });
+  const v = vids(70), byId = Object.fromEntries(v.map((x) => [x.id, x]));
+  const r = await T.runBatches({ pairs: T.makePairs(v, 1), cap: 400, send: (b) => s.send(T.buildBatch(b, byId, ["t"])), sleep: noSleep });
   assert.equal(r.cap, 64);
   assert.equal(r.capChanged, true);
   assert.equal(r.failed.length, 0);
@@ -104,7 +107,7 @@ test("discovers the limit from the error, re-plans, and reports the new cap", as
 
 test("a cached cap avoids the failed probe entirely", async () => {
   const s = server({ limit: 64 });
-  const out = await T.tagVideos({ videos: vids(10), tags: Array.from({ length: 7 }, (_, i) => `t${i}`), cap: 64, send: s.send, sleep: noSleep });
+  const out = await T.tagVideos({ videos: vids(70), tags: ["a", "b", "c"], cap: 64, send: s.send, sleep: noSleep });
   assert.equal(out.capChanged, false);
   assert.deepEqual(s.requests.map((x) => x.questions.length), [64, 6]);
 });
@@ -125,8 +128,8 @@ test("halves when the message gives no number, until it fits", async () => {
 test("different endpoints keep independent limits (nothing shared in the pure runner)", async () => {
   const a = server({ limit: 64 }), b = server({ limit: 8 });
   const tags = ["x", "y"];
-  const ra = await T.tagVideos({ videos: vids(40), tags, cap: 400, send: a.send, sleep: noSleep });
-  const rb = await T.tagVideos({ videos: vids(40), tags, cap: 400, send: b.send, sleep: noSleep });
+  const ra = await T.tagVideos({ videos: vids(100), tags, cap: 400, send: a.send, sleep: noSleep });
+  const rb = await T.tagVideos({ videos: vids(100), tags, cap: 400, send: b.send, sleep: noSleep });
   assert.equal(ra.cap, 64); assert.equal(rb.cap, 8);
 });
 
@@ -138,28 +141,28 @@ test("transient failures retry only that batch, with backoff", async () => {
   assert.equal(Object.keys(r.tagged).length, 30);
   assert.equal(r.failedIds.length, 0);
   assert.deepEqual(sleeps, [10, 20]);
-  // 60 pairs / 20 = 3 batches + 2 retries of the same single batch
-  assert.equal(s.requests.length, 5);
+  // 30 videos / 20 = 2 batches + 2 retries of the same single batch
+  assert.equal(s.requests.length, 4);
 });
 
 test("a batch that keeps failing is dropped alone: other videos still succeed", async () => {
-  // batch 2 of 3 (pairs 21..40) always 500s
+  // batch 2 of 2 (videos 20..29) always 500s
   const s = server(); const orig = s.send;
-  const send = async (spec) => { if (spec.questions.some((q) => /^vid0000001\d__/.test(q.name))) { throw httpErr(500, "boom"); } return orig(spec); };
+  const send = async (spec) => { if (spec.questions.some((q) => /^vid0000002\d__/.test(q.name))) { throw httpErr(500, "boom"); } return orig(spec); };
   const r = await T.tagVideos({ videos: vids(30), tags: ["a", "b"], cap: 20, send, retries: 1, baseDelay: 1, sleep: noSleep });
-  assert.deepEqual(r.failedIds.sort(), vids(30).slice(10, 20).map((v) => v.id)); // exactly the 10 videos in the bad batch
+  assert.deepEqual(r.failedIds.sort(), vids(30).slice(20, 30).map((v) => v.id)); // exactly the 10 videos in the bad batch
   assert.equal(Object.keys(r.tagged).length, 20);
   assert.equal(r.errors.length, 1);
   assert.equal(r.fatal, null);
   for (const id of r.failedIds) assert.ok(!(id in r.tagged)); // failed videos are NOT saved -> a re-run retries them
 });
 
-test("a video split across two batches with one half failed is not saved", async () => {
-  // 3 videos x 2 tags = 6 pairs, cap 3 -> batch1: v0t0 v0t1 v1t0, batch2: v1t1 v2t0 v2t1. Fail batch 2.
+test("a failed batch leaves its videos unsaved while earlier batches are kept", async () => {
+  // 3 videos, cap 2 -> batch1: v0 v1, batch2: v2. Fail batch 2.
   const s = server({ fail: (_s, n) => (n >= 2 ? httpErr(500, "x") : null) });
-  const r = await T.tagVideos({ videos: vids(3), tags: ["a", "b"], cap: 3, send: s.send, retries: 0, sleep: noSleep });
-  assert.deepEqual(Object.keys(r.tagged), [vids(3)[0].id]);
-  assert.equal(r.failedIds.length, 2);
+  const r = await T.tagVideos({ videos: vids(3), tags: ["a", "b"], cap: 2, send: s.send, retries: 0, sleep: noSleep });
+  assert.deepEqual(Object.keys(r.tagged), [vids(3)[0].id, vids(3)[1].id]);
+  assert.equal(r.failedIds.length, 1);
 });
 
 test("auth/unknown-model errors are fatal: stop immediately, don't burn requests", async () => {
@@ -173,13 +176,13 @@ test("auth/unknown-model errors are fatal: stop immediately, don't burn requests
 
 test("network errors (no status) are treated as transient", async () => {
   let n = 0;
-  const send = async (spec) => { if (n++ < 1) throw new Error("Failed to fetch"); return Object.fromEntries(spec.questions.map((q) => [q.name, 0.9])); };
+  const send = async (spec) => { if (n++ < 1) throw new Error("Failed to fetch"); return Object.fromEntries(spec.questions.map((q) => [q.name, { t0: 0.9, none: 0 }])); };
   const r = await T.tagVideos({ videos: vids(2), tags: ["a"], cap: 10, send, retries: 2, baseDelay: 1, sleep: noSleep });
   assert.equal(Object.keys(r.tagged).length, 2);
 });
 
 test("a server that omits some answers: those videos fail, the rest are kept", async () => {
-  const send = async (spec) => Object.fromEntries(spec.questions.filter((q) => !q.name.startsWith("vid00000001")).map((q) => [q.name, 0.9]));
+  const send = async (spec) => Object.fromEntries(spec.questions.filter((q) => !q.name.startsWith("vid00000001")).map((q) => [q.name, { t0: 0.9, none: 0 }]));
   const r = await T.tagVideos({ videos: vids(3), tags: ["a"], cap: 10, send, sleep: noSleep });
   assert.equal(r.failedIds.length, 1);
   assert.equal(Object.keys(r.tagged).length, 2);
@@ -195,7 +198,7 @@ test("duplicate videos are processed once; no pair is ever answered twice", asyn
   // the rejected probe is the only place pairs repeat; every accepted request is disjoint
   const okRequests = s.requests.filter((x) => x.questions.length <= 64).flatMap((x) => x.questions.map((q) => q.name));
   assert.equal(new Set(okRequests).size, okRequests.length);
-  assert.equal(new Set(asked).size, 15);
+  assert.equal(new Set(asked).size, 5);
 });
 
 test("after a re-plan, pairs that already succeeded are not re-sent", async () => {
@@ -214,36 +217,45 @@ test("after a re-plan, pairs that already succeeded are not re-sent", async () =
 });
 
 // ---------- ranking ----------
-test("rankVideo: top N above threshold, best first, ties by tag order", () => {
-  const tags = ["a", "b", "c", "d", "e"], id = "v";
-  const p = (arr) => Object.fromEntries(arr.map((x, i) => [T.nameFor(id, i), x]));
-  assert.deepEqual(T.rankVideo(p([0.6, 0.95, 0.7, 0.8, 0.2]), id, tags, 0.5, 3), ["b", "d", "c"]);
-  assert.deepEqual(T.rankVideo(p([0.1, 0.2, 0.3, 0.4, 0.2]), id, tags, 0.5, 3), []);        // nothing clears the threshold
-  assert.deepEqual(T.rankVideo(p([0.9, 0.9, 0.9, 0.9, 0.9]), id, tags, 0.5, 3), ["a", "b", "c"]); // stable ties
-  assert.deepEqual(T.rankVideo(p([0.6, 0.55, 0.9, 0.2, 0.1]), id, tags, 0.6, 3), ["c", "a"]); // threshold inclusive
-  assert.deepEqual(T.rankVideo(p([0.9, 0.8, 0.7, 0.6, 0.5]), id, tags, 0.5, 1), ["a"]);      // configurable max
+test("rankVideo: keeps every tag within X of the top score, best first, ties by tag order", () => {
+  const tags = ["a", "b", "c", "d"], id = "v";
+  const p = (arr, none = 0) => ({ [T.nameFor(id, 0)]: { t0: arr[0], t1: arr[1], t2: arr[2], t3: arr[3], none } });
+  assert.deepEqual(T.rankVideo(p([0.1, 0.5, 0.3, 0.05]), id, tags, 0.5), ["b", "c"]);       // cut = 0.25
+  assert.deepEqual(T.rankVideo(p([0.1, 0.5, 0.3, 0.05]), id, tags, 0), ["b"]);              // 0 = best only
+  assert.deepEqual(T.rankVideo(p([0.1, 0.5, 0.3, 0.05]), id, tags, 1), ["b", "c", "a", "d"]); // 1 = everything
+  assert.deepEqual(T.rankVideo(p([0.25, 0.25, 0.25, 0.25]), id, tags, 0), ["a", "b", "c", "d"]); // stable ties
+  assert.deepEqual(T.rankVideo(p([0.5, 0.25, 0.1, 0.05]), id, tags, 0.5), ["a", "b"]);      // threshold inclusive
+});
+
+test("rankVideo: none on top means no tags; none never counts as a tag", () => {
+  const tags = ["a", "b"], id = "v", key = T.nameFor(id, 0);
+  assert.deepEqual(T.rankVideo({ [key]: { t0: 0.3, t1: 0.2, none: 0.5 } }, id, tags, 0.9), []);
+  assert.deepEqual(T.rankVideo({ [key]: { t0: 0.5, t1: 0.2, none: 0.3 } }, id, tags, 0.9), ["a", "b"]);
+  assert.deepEqual(T.rankVideo({ [key]: { t0: 0.6, t1: 0.3 } }, id, tags, 0.1), ["a"]);   // server may omit none
 });
 
 test("rankVideo returns null when an answer is missing", () => {
-  assert.equal(T.rankVideo({ [T.nameFor("v", 0)]: 0.9 }, "v", ["a", "b"], 0.5, 3), null);
+  assert.equal(T.rankVideo({}, "v", ["a"], 0.5), null);
+  assert.equal(T.rankVideo({ [T.nameFor("v", 0)]: { t0: 0.9 } }, "v", ["a", "b"], 0.5), null);
 });
 
-test("tagVideos end-to-end: ranking uses the configured threshold and max", async () => {
-  const table = { a: 0.97, b: 0.4, c: 0.8, d: 0.75 };
+test("tagVideos end-to-end: the within threshold decides which tags are kept", async () => {
+  const table = { a: 0.5, b: 0.05, c: 0.3, d: 0.15 };
   const s = server({ p: (_id, t) => table["abcd"[t]] });
-  const strict = await T.tagVideos({ videos: vids(2), tags: ["a", "b", "c", "d"], min: 0.9, max: 3, send: s.send, sleep: noSleep });
-  assert.deepEqual(Object.values(strict.tagged)[0], ["a"]);
-  const loose = await T.tagVideos({ videos: vids(2), tags: ["a", "b", "c", "d"], min: 0.5, max: 3, send: s.send, sleep: noSleep });
-  assert.deepEqual(Object.values(loose.tagged)[0], ["a", "c", "d"]);
-  const capped = await T.tagVideos({ videos: vids(2), tags: ["a", "b", "c", "d"], min: 0.5, max: 2, send: s.send, sleep: noSleep });
-  assert.deepEqual(Object.values(capped.tagged)[0], ["a", "c"]);
+  const tags = ["a", "b", "c", "d"];
+  const best = await T.tagVideos({ videos: vids(2), tags, within: 0, send: s.send, sleep: noSleep });
+  assert.deepEqual(Object.values(best.tagged)[0], ["a"]);
+  const mid = await T.tagVideos({ videos: vids(2), tags, within: 0.5, send: s.send, sleep: noSleep });
+  assert.deepEqual(Object.values(mid.tagged)[0], ["a", "c"]);
+  const all = await T.tagVideos({ videos: vids(2), tags, within: 1, send: s.send, sleep: noSleep });
+  assert.deepEqual(Object.values(all.tagged)[0], ["a", "c", "d", "b"]);
 });
 
-test("request count is minimal: ceil(videos*tags/cap)", async () => {
-  for (const [v, t, cap] of [[10, 7, 64], [20, 3, 64], [5, 40, 64], [1, 1, 64], [100, 6, 400]]) {
+test("request count is minimal: ceil(videos/cap), independent of tag count", async () => {
+  for (const [v, t, cap] of [[100, 7, 64], [20, 3, 64], [5, 40, 64], [1, 1, 64], [1000, 6, 400]]) {
     const s = server();
     await T.tagVideos({ videos: vids(v), tags: Array.from({ length: t }, (_, i) => `t${i}`), cap, send: s.send, sleep: noSleep });
-    assert.equal(s.requests.length, Math.ceil((v * t) / cap), `${v}x${t}@${cap}`);
+    assert.equal(s.requests.length, Math.ceil(v / cap), `${v}x${t}@${cap}`);
   }
 });
 
@@ -287,10 +299,43 @@ test("scoreVideos returns a probability per video, dedupes, and discovers the li
 
 test("scoreVideos: a failing batch only fails its own videos", async () => {
   const send = async (spec) => {
-    if (spec.questions.some((q) => /^vid0000001\d__/.test(q.name))) throw httpErr(500, "boom");
+    if (spec.questions.some((q) => /^vid0000002\d__/.test(q.name))) throw httpErr(500, "boom");
     return Object.fromEntries(spec.questions.map((q) => [q.name, 0.8]));
   };
   const r = await T.scoreVideos({ videos: vids(30), query: "q", cap: 10, send, retries: 0, sleep: noSleep });
   assert.equal(r.failedIds.length, 10);
   assert.equal(Object.keys(r.scores).length, 20);
+});
+
+// ---------- custom question template ----------
+test("template placeholders are filled per question", () => {
+  const vs = vids(2), byId = Object.fromEntries(vs.map((v) => [v.id, v]));
+  const batch = [{ id: vs[0].id, t: 0 }, { id: vs[1].id, t: 0 }];
+  const spec = T.buildBatch(batch, byId, ["music", "news"], 'Which tag fits "{title}" from {channel}?');
+  assert.equal(spec.questions[0].instructions, `Which tag fits "${vs[0].title}" from ${vs[0].channel}?`);
+  assert.equal(spec.questions[1].instructions, `Which tag fits "${vs[1].title}" from ${vs[1].channel}?`);
+  assert.equal(T.parseName(spec.questions[1].name).id, vs[1].id);   // names still carry the real ids
+});
+
+test("template values are inserted literally (no $ patterns, no re-expansion) and one-lined", () => {
+  const byId = { a: { id: "a", title: "Cost: $& $1 {channel}\nline2", channel: "C" } };
+  const spec = T.buildBatch([{ id: "a", t: 0 }], byId, ["x"], "{title} / {channel} / {nope}");
+  assert.equal(spec.questions[0].instructions, "Cost: $& $1 {channel} line2 / C / {nope}");
+});
+
+test("a template containing {tag} (old format) or empty is ignored in favour of the default", () => {
+  const vs = vids(1), byId = { [vs[0].id]: vs[0] };
+  const want = T.DEFAULT_TEMPLATE.replace("{title}", vs[0].title).replace("{channel}", vs[0].channel);
+  assert.equal(T.buildBatch([{ id: vs[0].id, t: 0 }], byId, ["music"], "Is {title} about {tag}?").questions[0].instructions, want);
+  assert.equal(T.buildBatch([{ id: vs[0].id, t: 0 }], byId, ["music"], "  ").questions[0].instructions, want);
+  assert.equal(T.validTemplate("Is {title} about {tag}?"), false);
+  assert.equal(T.validTemplate("  "), false);
+  assert.equal(T.validTemplate("Which tag fits {title}?"), true);
+});
+
+test("tagVideos passes the template through to the endpoint", async () => {
+  const s = server();
+  const out = await T.tagVideos({ videos: vids(2), tags: ["music"], send: s.send, template: "{channel}: {title} -> which tag?" });
+  assert.equal(Object.keys(out.tagged).length, 2);
+  assert.ok(s.requests[0].questions[0].instructions.endsWith("-> which tag?"));
 });

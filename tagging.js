@@ -55,22 +55,26 @@
   // Network errors, timeouts, rate limits and 5xx are worth retrying; other 4xx are not.
   const isTransient = (e) => !e || e.status === undefined || e.status === 408 || e.status === 429 || e.status >= 500;
 
-  // ---- request body: each video described once per request, tags never repeated ----
-  const PREAMBLE = "For each numbered video below, judge whether it fits the tag named in the question, using only its title and channel.";
-  const oneLine = (s) => String(s || "").replace(/\s+/g, " ").trim();
+  // ---- request body: one "choice" question per video; every tag is a criterion ----
+    const oneLine = (s) => String(s || "").replace(/\s+/g, " ").trim();
+  const NONE = "none"; // criterion key for "no tag fits"; tag keys are t0, t1, ...
+  const tagKey = (i) => `t${i}`;
 
-  // Text and instructions use short per-request labels ([0], [1]...): 11-char video ids cost many
-  // tokens and would repeat in every question. Question *names* still carry the real ids.
-  function buildBatch(batch, byId, tags) {
-    const ids = [...new Set(batch.map((p) => p.id))];
-    const label = Object.fromEntries(ids.map((id, k) => [id, k]));
-    const lines = ids.map((id) => {
-      const v = byId[id];
-      return `[${label[id]}] ${oneLine(v.title)}${v.channel ? " by " + oneLine(v.channel) : ""}`;
-    });
+  // Optional user template for the question, e.g. 'Which tag fits "{title}" by {channel}?'. The tags
+  // themselves are sent as criteria, so a template must not contain {tag}.
+  const DEFAULT_TEMPLATE = 'Video: "{title}" by {channel}. Judging only by its title and channel, which tag fits it best?';
+  const validTemplate = (tpl) => typeof tpl === "string" && tpl.trim() !== "" && !tpl.includes("{tag}");
+  const fill = (tpl, vals) => tpl.replace(/\{(title|channel)\}/g, (_, k) => vals[k]); // single pass: inserted text is never re-expanded
+
+  function buildBatch(batch, byId, tags, template) {
+    const tpl = validTemplate(template) ? template : DEFAULT_TEMPLATE;
+    const criteria = Object.fromEntries([...tags.map((tag, i) => [tagKey(i), oneLine(tag)]), [NONE, "None of these tags fit"]]);
     return {
-      text: PREAMBLE + "\n" + lines.join("\n"),
-      questions: batch.map((p) => ({ name: nameFor(p.id, p.t), instructions: `[${label[p.id]}] fits "${tags[p.t]}"?` })),
+      text: "Answer each question using only the information it contains.",
+      questions: batch.map((p) => {
+        const v = byId[p.id];
+        return { name: nameFor(p.id, 0), instructions: fill(tpl, { title: oneLine(v.title), channel: oneLine(v.channel) }), criteria };
+      }),
     };
   }
 
@@ -94,7 +98,7 @@
           const got = await send(batch);
           for (const p of batch) {
             const k = nameFor(p.id, p.t);
-            if (typeof got[k] === "number") { probs[k] = got[k]; done.add(k); } else failed.push(p); // server skipped it
+            if (got[k] != null && typeof got[k] === "object" || typeof got[k] === "number") { probs[k] = got[k]; done.add(k); } else failed.push(p); // server skipped it
           }
           break;
         } catch (e) {
@@ -123,28 +127,36 @@
   }
 
   // ---- ranking ----
-  // Tags at or above `min`, most confident first, at most `max`. null if any answer is missing.
-  function rankVideo(probs, id, tags, min, max) {
-    const scored = tags.map((tag, i) => ({ tag, i, p: probs[nameFor(id, i)] }));
+  // `probs` is the choice distribution for one video. Keep every tag whose probability is within
+  // `within` (0-1) of the top one, i.e. p >= top * (1 - within). If "none" is the top choice, no tag.
+  // null if the answer is incomplete.
+  function rankVideo(probs, id, tags, within) {
+    const d = probs[nameFor(id, 0)];
+    if (!d || typeof d !== "object") return null;
+    const scored = tags.map((tag, i) => ({ tag, i, p: d[tagKey(i)] }));
     if (scored.some((s) => typeof s.p !== "number")) return null;
-    return scored.filter((s) => s.p >= min).sort((a, b) => b.p - a.p || a.i - b.i).slice(0, max).map((s) => s.tag);
+    const none = typeof d[NONE] === "number" ? d[NONE] : 0;
+    const top = Math.max(none, ...scored.map((s) => s.p));
+    if (none >= top || top <= 0) return [];
+    const cut = top * (1 - Math.min(1, Math.max(0, within)));
+    return scored.filter((s) => s.p >= cut).sort((a, b) => b.p - a.p || a.i - b.i).map((s) => s.tag);
   }
 
   // ---- everything together ----
-  // send(spec) -> { [questionName]: probability }, spec = { text, questions: [{name, instructions}] }
-  async function tagVideos({ videos, tags, cap = DEFAULT_CAP, min = 0.5, max = 3, send, retries, baseDelay, sleep }) {
+  // send(spec) -> { [questionName]: { t0: p, t1: p, none: p } }, spec = { text, questions: [{name, instructions, criteria}] }
+  async function tagVideos({ videos, tags, template, cap = DEFAULT_CAP, within = 0.4, send, retries, baseDelay, sleep }) {
     const byId = {};
     for (const v of videos) if (v.id && !byId[v.id]) byId[v.id] = v; // no duplicate videos
     const list = Object.values(byId);
 
     const run = await runBatches({
-      pairs: makePairs(list, tags.length), cap, retries, baseDelay, sleep,
-      send: (batch) => send(buildBatch(batch, byId, tags)),
+      pairs: list.map((v) => ({ id: v.id, t: 0 })), cap, retries, baseDelay, sleep,
+      send: (batch) => send(buildBatch(batch, byId, tags, template)),
     });
 
     const tagged = {}, failedIds = [];
     for (const v of list) {
-      const r = rankVideo(run.probs, v.id, tags, min, max);
+      const r = rankVideo(run.probs, v.id, tags, within);
       r ? (tagged[v.id] = r) : failedIds.push(v.id); // incomplete videos are not saved, so a re-run retries them
     }
     return { tagged, failedIds, errors: run.errors, fatal: run.fatal, calls: run.calls, cap: run.cap, capChanged: run.capChanged };
@@ -184,7 +196,7 @@
     return { scores, failedIds, errors: run.errors, fatal: run.fatal, calls: run.calls, cap: run.cap, capChanged: run.capChanged };
   }
 
-  const api = { DEFAULT_CAP, nameFor, parseName, makePairs, planBatches, parseLimit, nextCap, isTransient, buildBatch, runBatches, workUnit, rankVideo, tagVideos, buildFilterBatch, scoreVideos };
+  const api = { validTemplate, DEFAULT_TEMPLATE, DEFAULT_CAP, nameFor, parseName, makePairs, planBatches, parseLimit, nextCap, isTransient, buildBatch, runBatches, workUnit, rankVideo, tagVideos, buildFilterBatch, scoreVideos };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Tagging = api;
 })(typeof self !== "undefined" ? self : globalThis);
