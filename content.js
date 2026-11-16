@@ -90,7 +90,26 @@
     }
     document.body.appendChild(bar);
   }
-  const schedule = () => { clearTimeout(timer); timer = setTimeout(render, 300); };
+  const schedule = () => { clearTimeout(timer); timer = setTimeout(render, 300); schedulePrune(); };
+
+  // Forget tags and AI scores of videos that are no longer in Watch Later (removed here, on your phone, anywhere).
+  // Only runs once the whole list is loaded: a partly loaded list would look like "everything else is gone".
+  let pruneTimer;
+  const schedulePrune = () => { clearTimeout(pruneTimer); pruneTimer = setTimeout(prune, 3000); };
+  let lastPruneKey = "";
+  async function prune() {
+    if (!onWL()) return;
+    const ids = [...document.querySelectorAll(ITEMS)].map(idOf).filter(Boolean);
+    if (!ids.length || document.querySelector("ytd-continuation-item-renderer")) return; // empty page, or more still loading
+    const key = ids.join(","); // act only when the list was identical on two checks in a row (not mid-render)
+    if (key !== lastPruneKey) { lastPruneKey = key; schedulePrune(); return; }
+    const cur = await store.get(["vidTags", "aiScores"]), patch = {};
+    for (const key of ["vidTags", "aiScores"]) {
+      const r = TidySync.pruneGone(cur[key] || {}, ids);
+      if (r.removed.length) patch[key] = r.kept;
+    }
+    if (Object.keys(patch).length) await store.set(patch);
+  }
 
   async function load() {
     ({ vidTags = {}, tagList = [], aiOn = false, aiScores = {}, aiMin = 0.6, aiScoredQuery: aiQuery = "" } = await store.get(["vidTags", "tagList", "aiOn", "aiScores", "aiMin", "aiScoredQuery"]));

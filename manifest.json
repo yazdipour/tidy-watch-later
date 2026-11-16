@@ -25,6 +25,7 @@
         "https://www.youtube.com/*"
       ],
       "js": [
+        "sync.js",
         "content.js"
       ],
       "css": [

@@ -1,6 +1,12 @@
 // Calls the Systemone endpoint. Runs here (not in the page) to avoid CORS.
-importScripts("tagging.js"); // pure batching / retry / ranking logic (unit-tested)
-const DEF = { base: "http://localhost:11434/v1", model: "", apiKey: "", tagMax: 3, tagMin: 0.5 };
+importScripts("tagging.js", "sync.js"); // pure batching / retry / ranking logic and tag sync (unit-tested)
+// Opt-in tag sync across devices (chrome.storage.sync). Listeners are registered at top level so Chrome wakes the worker.
+TidySync.createSync({
+  local: chrome.storage.local, sync: chrome.storage.sync,
+  onChanged: (fn) => chrome.storage.onChanged.addListener(fn),
+}).start();
+
+const DEF = { base: "http://localhost:11434/v1/systemone", model: "", apiKey: "", tagMax: 3, tagMin: 0.5 };
 
 async function post(url, apiKey, body) {
   let res;
@@ -17,7 +23,7 @@ async function post(url, apiKey, body) {
     const text = await res.text();
     let hint = "";
     if (res.status === 403) hint = "\n\nHint: 403 from a local server is usually an origin (CORS) rejection. For Ollama, restart it with OLLAMA_ORIGINS=\"chrome-extension://*\".";
-    if (res.status === 404) hint = "\n\nHint: 404 usually means a wrong base URL (try ending it in /v1) or an unknown model name.";
+    if (res.status === 404) hint = "\n\nHint: 404 usually means a wrong endpoint URL (enter the full URL, including the /systemone path) or an unknown model name.";
     console.error("Tagging request failed", url, res.status, text);
     const err = new Error(`POST ${url}\n→ ${res.status} ${res.statusText}\n${text.slice(0, 3000)}${hint}`);
     err.status = res.status; err.body = text;
@@ -26,10 +32,10 @@ async function post(url, apiKey, body) {
   return res.json();
 }
 
-// Systemone: POST /systemone, "noul" questions -> answers[name].noul (probability).
+// Systemone: POST to the full endpoint URL the user entered, "noul" questions -> answers[name].noul (probability).
 // `criteria` is optional on the server, so it is omitted to save tokens.
 const systemone = (s) => async (spec) => {
-  const { answers } = await post(s.base + "/systemone", s.apiKey, {
+  const { answers } = await post(s.base, s.apiKey, {
     model: s.model, state: spec.text,
     questions: Object.fromEntries(spec.questions.map((q) => [q.name, { type: "noul", instructions: q.instructions }])),
   });

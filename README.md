@@ -37,10 +37,10 @@ Requires a Chromium browser with Manifest V3 support.
 
 ## Set up your AI endpoint
 
-The tagging and AI Filter tools need a server that implements the Systemone API (see [below](#the-systemone-endpoint)). Delete Watched works without one.
+The tagging and AI Filter tools need a server that implements the Systemone API (see [below](#the-systemone-endpoint) and the [Ollama docs](https://docs.ollama.com/api/systemone)). Good options: the open model [d3](https://ollama.com/library/d3) on Ollama, or a hosted JEV, OpenAI or Google Decision endpoint. Delete Watched works without one.
 
 1. Open the **Settings** tab (the gear icon).
-2. Enter the **endpoint base URL** (for example `http://localhost:11434/v1`) and the **model** name. The API key is optional.
+2. Enter the **endpoint URL**, the full address including the path (for example `http://localhost:11434/v1/systemone`) and the **model** name. The API key is optional.
 3. Click **Test connection**, then **Save**.
 
 ### If the test fails with 403 or "Failed to fetch"
@@ -57,7 +57,7 @@ If the server is on another machine it must also listen on the network (for Olla
 
 ## The Systemone endpoint
 
-The extension calls `POST {base}/systemone` with one yes/no question per item:
+The extension calls `POST` to the endpoint URL you entered with one yes/no question per item:
 
 ```jsonc
 // request
@@ -82,13 +82,13 @@ The extension calls `POST {base}/systemone` with one yes/no question per item:
 Full policy: [PRIVACY.md](PRIVACY.md). In short:
 
 - **What is sent, and where:** video titles, channel names, durations, the "views • age" text, how much of each video you watched, and list positions go to **the endpoint you configured**, and nowhere else.
-- **What is stored:** your settings, tags and scores, in `chrome.storage.local` in your browser. Your API key (if you set one) is stored the same way, unencrypted. Don't reuse a valuable key.
+- **What is stored:** your settings, tags and scores, in `chrome.storage.local` in your browser. Optional **Sync tags between my devices** (off by default) also copies video IDs and tag names, never the API key, into your browser's sync (Google account in Chrome, Microsoft account in Edge). Your API key (if you set one) is stored the same way, unencrypted. Don't reuse a valuable key.
 - **No telemetry.** There is no analytics and no remote code.
 
 | Permission | Why |
 |---|---|
 | `activeTab`, `scripting` | Run the delete tools on the Watch Later tab you're looking at. |
-| `storage` | Save settings, tags and scores. |
+| `storage` | Save settings, tags and scores; optional tag sync. |
 | `localhost` / `127.0.0.1` | Reach a local AI server. |
 | optional: any `http(s)` host | Requested only when you save or test a non-local endpoint. |
 | content script on `youtube.com` | Show tag chips and the filter bar, and run the scans. |

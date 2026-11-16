@@ -19,7 +19,7 @@
     <p><b>You're not on your Watch Later page.</b> The tools only work on youtube.com/playlist?list=WL.</p>
     <button type="button" id="openWL">Open Watch Later</button>
   </div>
-  <p class="desc">Tidy your YouTube Watch Later list: delete videos you have already watched, tag videos from their titles with your own AI model, and bulk-delete by tag. Open your Watch Later playlist, then pick a tool.</p>
+  <p class="desc">Tidy your Watch Later list: delete watched videos, tag them with your own AI model, filter, and bulk-delete by tag. Open your Watch Later playlist, then pick a tool.</p>
   <button type="button" class="card outline secondary" data-go="tag"><b>Tagging</b><small>Label each video with tags using your AI model</small></button>
   <button type="button" class="card outline secondary" data-go="ai"><b>AI Filter</b><small>Describe what you want; show only the best matches</small></button>
   <button type="button" class="card outline secondary" data-go="remove"><b>Delete Watched</b><small>Remove videos watched past a percentage</small></button>
@@ -28,7 +28,7 @@
 </section>
 
 <section id="tab-ai" hidden>
-  <p class="desc">Describe what you want to watch. Your model scores each video on its title, channel, duration, views and age, and how much you have watched, and only the best matches stay visible on the page. Scoring starts at the top of the list.</p>
+  <p class="desc">Describe what you want to watch. Your model scores each video and only the best matches stay visible. Scoring starts at the top of the list.</p>
   <label for="aiQuery">What are you looking for?</label>
   <textarea id="aiQuery" rows="3" placeholder="e.g. short beginner-friendly Rust tutorials"></textarea>
   <label for="aiMin">Match at least <b><span id="aiMinVal">60</span>%</b> <small>updates the page live</small></label>
@@ -44,7 +44,7 @@
 </section>
 
 <section id="tab-remove" hidden>
-  <p class="desc">Removes videos from your Watch Later list that you have already watched past the percentage you pick. It works through the list in chunks, pausing to load more videos, and stops at your limit or the end of the list. Open your Watch Later playlist first.</p>
+  <p class="desc">Removes videos you have watched past the percentage you pick, in chunks, until your limit or the end of the list. Open your Watch Later playlist first.</p>
   <label for="n">Remove videos watched ≥ <b><span id="val">80</span>%</b></label>
   <input type="range" id="n" min="1" max="100" value="80">
   <label>Limit <small>max videos to remove, 0 = all</small>
@@ -56,7 +56,7 @@
 </section>
 
 <section id="tab-tag" hidden>
-  <p class="desc">Uses your AI model to tag each video from its title and channel. Add your tags below; every video gets the tags that fit best, shown as small labels on the page with a filter bar at the top right. Only untagged videos are processed unless you tick re-tag.</p>
+  <p class="desc">Your model tags each video from its title and channel. Tags show as labels on the page, with a filter bar at the top right. Already-tagged videos are skipped unless you tick re-tag.</p>
   <label for="tagInput">Tags</label>
   <div class="chips" id="chips"></div>
   <input type="text" id="tagInput" placeholder="Type a tag, press Enter" autocomplete="off">
@@ -78,7 +78,7 @@
 </section>
 
 <section id="tab-bytag" hidden>
-  <p class="desc">Removes videos from your Watch Later list based on the tags you generated in the Tagging tab. Pick one or more tags: every video carrying any of them is removed. Only tagged videos can be matched, so run the Tagging tab first.</p>
+  <p class="desc">Removes every video carrying any tag you pick. Only tagged videos can match, so run Tagging first.</p>
   <label>Remove videos tagged <small>select one or more</small></label>
   <div class="chips" id="tagPick"></div>
   <label>Limit <small>max videos to remove, 0 = all</small>
@@ -90,9 +90,9 @@
 </section>
 
 <section id="tab-settings" hidden>
-  <p class="desc">Connects the extension to your Systemone endpoint, which scores each video against your tags. Enter the endpoint URL and model name. Everything is stored only in this browser, and video titles and channel names are sent to this endpoint when tagging.</p>
-  <label for="base">Endpoint base URL</label>
-  <input type="text" id="base" placeholder="http://localhost:11434/v1">
+  <p class="desc">Connect a <a href="https://docs.ollama.com/api/systemone" target="_blank" rel="noopener noreferrer">Systemone</a> endpoint. Try the open model <a href="https://ollama.com/library/d3" target="_blank" rel="noopener noreferrer">d3</a> on Ollama, or a hosted JEV, OpenAI or Google Decision endpoint. Titles and channels are sent only to this endpoint; settings stay in this browser.</p>
+  <label for="base">Endpoint URL <small>full URL, including the path</small></label>
+  <input type="text" id="base" placeholder="http://localhost:11434/v1/systemone">
   <label for="model">Model</label>
   <input type="text" id="model" placeholder="model name, e.g. d3:2b">
   <label for="key">API key <small>optional for local</small></label>
@@ -102,6 +102,8 @@
   <pre class="err" id="testErr" hidden></pre>
   <p class="status" id="keyStatus" aria-live="polite"></p>
   <button id="saveSettings">Save</button>
+  <label class="check" style="margin-top: 0.5rem;"><input type="checkbox" id="syncOn"> Sync tags between my devices.</label>
+  <p class="status" id="syncStatus" aria-live="polite"></p>
 
   <div class="info" id="corsInfo" hidden>
     <b>Test failing, or "Failed to fetch" / 403?</b>

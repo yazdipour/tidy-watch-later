@@ -29,14 +29,15 @@ checkPage();
 async function renderHome() {
   const { base, model } = await store.get(["base", "model"]);
   const tagged = Object.values(vt).filter((v) => toArr(v).length).length;
-  q("homeStatus").textContent = (model ? `Endpoint: ${base || "http://localhost:11434/v1"} · ${model}` : "No model set yet. Open Settings (gear icon).") +
+  q("homeStatus").textContent = (model ? `Endpoint: ${base || "http://localhost:11434/v1/systemone"} · ${model}` : "No model set yet. Open Settings (gear icon).") +
     ` · ${tagged} tagged video${tagged === 1 ? "" : "s"}`;
 }
 
 // ---- load saved values
-store.get(["tagList", "base", "model", "apiKey", "tagLimit", "tagRegen", "rlimit", "tagMax", "tagMin", "btlimit", "btSel", "vidTags", "aiQuery", "aiMin", "aiLimit"]).then((s) => {
+store.get(["tagList", "base", "model", "apiKey", "tagLimit", "tagRegen", "rlimit", "tagMax", "tagMin", "btlimit", "btSel", "vidTags", "aiQuery", "aiMin", "aiLimit", "syncOn", "syncError"]).then((s) => {
+  q("syncOn").checked = !!s.syncOn; renderSync(s.syncError);
   tags = s.tagList || []; renderChips();
-  q("base").value = s.base ?? "http://localhost:11434/v1";
+  q("base").value = s.base ?? "http://localhost:11434/v1/systemone";
   q("model").value = s.model || ""; q("key").value = s.apiKey || "";
   q("tagLimit").value = s.tagLimit ?? 10;
   q("tagRegen").checked = !!s.tagRegen; q("btlimit").value = s.btlimit ?? 10; picked = new Set(s.btSel || []); vt = s.vidTags || {}; renderPick(); renderHome();
@@ -52,6 +53,9 @@ num("tagLimit", "tagLimit", 0); num("aiLimit", "aiLimit", 0); num("rlimit", "rli
 q("tagMin").addEventListener("change", () => {
   q("tagMin").value = Math.min(1, Math.max(0, +q("tagMin").value || 0)); store.set({ tagMin: +q("tagMin").value });
 });
+// ---- tag sync (the background worker does the work; this is just the switch)
+const renderSync = (err) => { q("syncStatus").textContent = err ? `Sync problem: ${err}` : ""; };
+q("syncOn").addEventListener("change", () => store.set({ syncOn: q("syncOn").checked, syncError: "" }));
 q("tagRegen").addEventListener("change", () => store.set({ tagRegen: q("tagRegen").checked }));
 
 // ---- tag chips
@@ -197,7 +201,8 @@ function renderPick() {
   q("btStatus").textContent = names.length ? (n ? `${n} video${n > 1 ? "s" : ""} match the selected tags.` : "Select the tags to remove.")
     : "No tagged videos yet. Run the Tagging tab first.";
 }
-chrome.storage.onChanged.addListener((c) => { if (c.vidTags) { vt = c.vidTags.newValue || {}; renderPick(); } if (c.vidTags || c.base || c.model) renderHome(); });
+chrome.storage.onChanged.addListener((c) => {
+  if (c.syncError) renderSync(c.syncError.newValue); if (c.vidTags) { vt = c.vidTags.newValue || {}; renderPick(); } if (c.vidTags || c.base || c.model) renderHome(); });
 
 q("btGo").addEventListener("click", () => {
   const n = matchIds().length;
