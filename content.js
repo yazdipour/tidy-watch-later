@@ -2,11 +2,14 @@
   const ITEMS = "ytd-playlist-video-renderer, yt-lockup-view-model";
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const store = chrome.storage.local;
-  let vidTags = {}, tagList = [], filter = null, stopFlag = false, timer;
-  let aiOn = false, aiScores = {}, aiMin = 0.6, aiQuery = "";
+  let vidTags = {}, tagList = [], filter = null, stopFlag = false, stopNow = null, timer; // stopNow: resolves when Stop is pressed, to cut short a pending request
+  let aiOn = false, aiScores = {}, aiMin = 0.6, aiQuery = "", aiLimit = 10;
 
   const toArr = (v) => (Array.isArray(v) ? v : v ? [v] : []);
-  const onWL = () => location.pathname === "/playlist" && /[?&]list=WL\b/.test(location.search);
+  // End of the list = nothing new after two scrolls AND no "loading more" spinner. YouTube can take many
+// seconds to fetch the next page, so while the spinner is there keep waiting (up to ~20s as a safety net).
+const listEnded = (idle) => idle >= 15 || (idle >= 2 && !document.querySelector("ytd-continuation-item-renderer"));
+const onWL = () => location.pathname === "/playlist" && /[?&]list=WL\b/.test(location.search);
   const idOf = (el) => /[?&]v=([\w-]{11})/.exec(el.querySelector("a[href*='watch?v=']")?.getAttribute("href") || "")?.[1];
   const txt = (el, sel) => (el.querySelector(sel)?.textContent || "").replace(/\s+/g, " ").trim();
   const watchedPct = (el) => {
@@ -35,10 +38,16 @@
 
   function render() {
     document.getElementById("wlm-bar")?.remove();
+    // Hidden non-matches shrink the page, so YouTube's infinite scroll keeps fetching pages to fill it.
+    // While the AI filter is on and no scan is running, hide the "loading more" spinner to stop that.
+    document.documentElement.classList.toggle("wlm-ai-idle", onWL() && aiOn && ai.state !== "running");
     if (!onWL()) return;
     // A filter on a tag nobody carries anymore (tags cleared / last chip removed) would hide every video.
     if (filter && !Object.values(vidTags).some((v) => toArr(v).includes(filter))) filter = null;
     const items = [...document.querySelectorAll(ITEMS)];
+    // Scoring runs in batches, so a scan can overshoot the limit; show only the best `aiLimit` matches.
+    const ranked = Object.entries(aiScores).filter(([, p]) => p >= aiMin).sort((a, b) => b[1] - a[1]);
+    const keep = new Set((aiLimit > 0 ? ranked.slice(0, aiLimit) : ranked).map(([id]) => id));
     for (const el of items) {
       const id = idOf(el), tg = toArr(id && vidTags[id]), key = tg.join("\u0001");
       let box = el.querySelector(".wlm-chips");
@@ -69,14 +78,14 @@
         const label = `${Math.round(aiScores[id] * 100)}% match`;
         if (sc.textContent !== label) sc.textContent = label;
       } else sc?.remove();
-      const aiHidden = aiOn && !(id && aiScores[id] >= aiMin); // AI filter shows only scored matches
+      const aiHidden = aiOn && !(id && keep.has(id)); // AI filter shows only scored matches
       el.style.display = (filter && !tg.includes(filter)) || aiHidden ? "none" : "";
     }
     const anyTags = Object.values(vidTags).some((v) => toArr(v).length);
     if (!anyTags && !aiOn) return;
     const bar = document.createElement("div"); bar.id = "wlm-bar";
     if (aiOn) {
-      const shown = Object.values(aiScores).filter((p) => p >= aiMin).length;
+      const shown = keep.size;
       const b = document.createElement("button");
       b.className = "ai"; b.textContent = `AI: \u201c${aiQuery.slice(0, 30)}${aiQuery.length > 30 ? "\u2026" : ""}\u201d \u00b7 ${shown} \u2715`;
       b.title = "Show all videos again"; b.onclick = () => store.set({ aiOn: false });
@@ -112,12 +121,12 @@
   }
 
   async function load() {
-    ({ vidTags = {}, tagList = [], aiOn = false, aiScores = {}, aiMin = 0.6, aiScoredQuery: aiQuery = "" } = await store.get(["vidTags", "tagList", "aiOn", "aiScores", "aiMin", "aiScoredQuery"]));
+    ({ vidTags = {}, tagList = [], aiOn = false, aiScores = {}, aiMin = 0.6, aiScoredQuery: aiQuery = "", aiLimit = 10 } = await store.get(["vidTags", "tagList", "aiOn", "aiScores", "aiMin", "aiScoredQuery", "aiLimit"]));
     render();
   }
   store.onChanged.addListener(load);
   new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
-  load();
+  store.set({ aiOn: false }).then(load); // the AI filter is per page view: a refresh shows every video again
 
   // Run state lives here (in the page), so it survives the popup closing.
   let run = { state: "idle" };
@@ -154,7 +163,7 @@
         await sleep(1200);
         idle = count() === before ? idle + 1 : 0;
         report();
-        if (idle >= 2) break;
+        if (listEnded(idle)) break;
       }
       setRun({ state: stopFlag ? "stopped" : "done", tagged, failed, warn, processed: attempted.size, loaded: count() });
     })().catch((e) => setRun({ state: "error", error: e.message }));
@@ -163,7 +172,7 @@
 
   // ---- AI filter run (state lives here too, so the popup can close and reopen) ----
   let ai = { state: "idle" };
-  const setAi = (p) => { ai = { ...ai, ...p }; try { chrome.runtime.sendMessage({ aiState: ai }).catch(() => {}); } catch {} };
+  const setAi = (p) => { const was = ai.state; ai = { ...ai, ...p }; if (ai.state !== was) render(); try { chrome.runtime.sendMessage({ aiState: ai }).catch(() => {}); } catch {} };
 
   async function aiStart() {
     if (ai.state === "running") return { error: "The AI filter is already running." };
@@ -175,13 +184,15 @@
     const scores = query === aiScoredQuery ? { ...old } : {}; // same request: keep scores and just scan further
     await store.set({ aiOn: true, aiScoredQuery: query, aiScores: scores });
     stopFlag = false;
+    const stopped = new Promise((r) => { stopNow = r; });
     const unitBase = (await chrome.runtime.sendMessage({ type: "plan", tags: [query] }).catch(() => null))?.unit || 20;
     const unit = aiLimit > 0 ? Math.min(unitBase, Math.max(5, aiLimit)) : unitBase; // small steps when stopping early, so we overshoot the limit by little
     const count = () => document.querySelectorAll(ITEMS).length;
     let failed = 0, warn = "", idle = 0;
     const attempted = new Set();
-    const matches = (min) => Object.values(scores).filter((p) => p >= min).length;
-    const report = async () => setAi({ scanned: Object.keys(scores).length, matches: matches((await store.get("aiMin")).aiMin ?? 0.6), failed, warn, loaded: count() });
+    const matches = (min) => Object.values(scores).filter((p) => p >= min).length; // may exceed aiLimit: batches overshoot
+    const shownCount = (min) => (aiLimit > 0 ? Math.min(aiLimit, matches(min)) : matches(min));
+    const report = async () => setAi({ scanned: Object.keys(scores).length, matches: shownCount((await store.get("aiMin")).aiMin ?? 0.6), failed, warn, loaded: count() });
     setAi({ state: "running", limit: aiLimit, failed: 0, warn: "", error: null });
     await report();
 
@@ -194,7 +205,8 @@
           .filter((v) => v.id && v.title && !(v.id in scores) && !attempted.has(v.id)).slice(0, unit);
         if (todo.length) {
           idle = 0; todo.forEach((v) => attempted.add(v.id));
-          const r = await chrome.runtime.sendMessage({ type: "score", items: todo, query });
+          const r = await Promise.race([chrome.runtime.sendMessage({ type: "score", items: todo, query }), stopped.then(() => "stop")]);
+          if (r === "stop") break; // drop the in-flight batch; those videos are simply re-scored next run
           if (r?.error) return setAi({ state: "error", error: r.error });
           Object.assign(scores, r.scores); failed += r.failed || 0; warn = r.warn || warn; await report(); continue;
         }
@@ -203,7 +215,7 @@
         await sleep(1200);
         idle = count() === before ? idle + 1 : 0;
         await report();
-        if (idle >= 2) break; // end of list
+        if (listEnded(idle)) break;
       }
       await report();
       setAi({ state: stopFlag ? "stopped" : "done" });
@@ -213,7 +225,7 @@
 
   chrome.runtime.onMessage.addListener((m, _s, send) => {
     if (m.type === "aiRun") { aiStart().then(send); return true; }
-    if (m.type === "aiStop") { stopFlag = true; send({}); }
+    if (m.type === "aiStop") { stopFlag = true; stopNow?.(); send({}); }
     if (m.type === "aiGet") send(ai);
   });
 

@@ -15,3 +15,6 @@ html[dark] .wlm-chip { background: rgba(205,32,31,.22); border-color: rgba(255,1
   background: rgba(46,160,67,.12); color: #1f7a33; font: 500 12px/18px system-ui, sans-serif; }
 html[dark] .wlm-score { color: #6fd283; border-color: rgba(111,210,131,.4); }
 #wlm-bar button.ai { background: #CD201F; }
+
+/* AI filter on, no scan running: stop YouTube auto-loading more pages behind the hidden videos */
+html.wlm-ai-idle ytd-continuation-item-renderer { display: none !important; }

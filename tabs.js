@@ -226,10 +226,11 @@ q("aiMin").addEventListener("input", () => { // the page re-filters instantly fr
   q("aiMinVal").textContent = q("aiMin").value; store.set({ aiMin: +q("aiMin").value / 100 });
 });
 
+let aiRunning = false; // the one AI button doubles as Start / Stop
 function renderAi(r) {
   if (!r || r.state === "idle") return;
   const running = r.state === "running";
-  q("aiGo").hidden = running; q("aiStop").hidden = !running; q("aiBar").hidden = !running;
+  aiRunning = running; q("aiGo").textContent = running ? "Stop" : "Find videos"; q("aiGo").classList.toggle("secondary", running); q("aiGo").disabled = false; q("aiBar").hidden = !running;
   q("aiErr").hidden = r.state !== "error" && !(r.failed && r.warn);
   const tail = r.failed ? ` ${r.failed} failed (will be retried next run).` : "";
   if (running) {
@@ -243,6 +244,7 @@ function renderAi(r) {
   }
 }
 q("aiGo").addEventListener("click", async () => {
+  if (aiRunning) { q("aiGo").disabled = true; q("aiStatus").textContent = "Stopping…"; toContent({ type: "aiStop" }).catch(() => {}); return; }
   const { base, model } = await store.get(["base", "model"]);
   if (!base || !model) { q("aiStatus").textContent = "Set endpoint and model in Settings first."; return; }
   if (!q("aiQuery").value.trim()) { q("aiStatus").textContent = "Describe what you are looking for first."; return; }
@@ -254,7 +256,6 @@ q("aiGo").addEventListener("click", async () => {
     else renderAi({ state: "running", scanned: 0, matches: 0, limit: +q("aiLimit").value });
   } catch (e) { q("aiStatus").textContent = e.message; }
 });
-q("aiStop").addEventListener("click", () => toContent({ type: "aiStop" }).catch(() => {}));
 q("aiClear").addEventListener("click", async () => { await store.set({ aiOn: false }); q("aiStatus").textContent = "Showing all videos."; });
 chrome.runtime.onMessage.addListener((m) => { if (m.aiState) renderAi(m.aiState); });
 toContent({ type: "aiGet" }).then(renderAi).catch(() => {});
