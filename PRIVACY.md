@@ -1,13 +1,13 @@
 # Privacy Policy: Tidy Watch Later
 
-_Effective 2026-11-15_
+_Effective 2026-11-16_
 
 Tidy Watch Later is a browser extension that tidies your YouTube **Watch Later** playlist. This policy explains what data it handles. The short version: **it has no server of its own, collects nothing, and sends data only to the AI endpoint you configure yourself.**
 
 ## What the extension does with your data
 
 ### Data that stays in your browser
-The extension saves the following in your browser's local extension storage (`chrome.storage.local`). It is not synced to your Google account and is never sent to the developer:
+The extension saves the following in your browser's local extension storage (`chrome.storage.local`). By default none of it is synced to your browser account (Google or Microsoft), and it is never sent to the developer:
 
 - your settings: endpoint URL, model name, and an API key if you choose to enter one;
 - your tag list and each video's tags (keyed by YouTube video ID);
@@ -15,6 +15,14 @@ The extension saves the following in your browser's local extension storage (`ch
 - the question limit discovered for your endpoint, and your preferences (limits, probability thresholds).
 
 Your API key is stored **unencrypted** in that local storage. Don't reuse a valuable key.
+
+### Optional: tag sync between your devices
+**Off by default.** If you turn on **Sync tags between my devices** in Settings, the extension also copies the following into your browser's own sync storage (`chrome.storage.sync`):
+
+- the YouTube video IDs you have tagged and the tag names on each (at most 3,000 videos; if you have more, the most recently tagged are kept);
+- a timestamp, used to decide which device's copy is newer.
+
+Your browser stores and transfers this through **its own account sync** (Google for Chrome, Microsoft for Edge), under that provider's privacy policy, and only if you are signed in to the browser with extension sync enabled. If you are not, nothing leaves the device. Chrome and Edge do not share it with each other. The developer never receives it. **Never synced:** your API key, endpoint URL, model name, AI Filter requests and scores, and any other setting. Turn the option off to stop syncing; copies already in your sync account are removed when you use **Clear all saved tags** with sync on, when you reset your browser's sync data (Google: `chrome.google.com/sync`; Microsoft: the Sync settings in Edge), or when you remove the extension.
 
 ### Data sent to your AI endpoint
 The Tagging and AI Filter tools send data to **the endpoint URL you entered in Settings, and to nowhere else**. For each video that is scored, this is:
@@ -48,14 +56,15 @@ The use of information received from Google APIs and Chrome extension APIs adher
 | Permission | Why it is needed |
 |---|---|
 | `activeTab`, `scripting` | Run the delete tools on the Watch Later tab you are looking at, when you click the extension. |
-| `storage` | Save your settings, tags and scores locally. |
+| `storage` | Save your settings, tags and scores locally, and, only if you turn on tag sync, your tags in your browser's sync storage. |
 | Content script on `https://www.youtube.com/*` | Show tag chips and the filter bar, and run the scans, on the Watch Later page. |
 | Host access to `localhost` and `127.0.0.1` | Reach an AI server running on your own computer. |
 | Optional access to other `http(s)` hosts | Requested **only** when you click Save or Test connection for an endpoint that is not on your computer. Chrome asks you to approve that single host. Nothing is granted before you approve. |
 
 ## Your control over the data
 
-- **Delete tags:** use **Clear all saved tags** in the Tagging tab, or the ✕ on a tag chip.
+- **Delete tags:** use **Clear all saved tags** in the Tagging tab, or the ✕ on a tag chip. With sync on, this also clears the synced copy on your other devices.
+- **Automatic cleanup:** when the Watch Later page has fully loaded, the extension forgets the tags and AI Filter scores of any video that is no longer in the list.
 - **Stop the AI features:** leave the **Model** field in Settings empty (the AI tools then refuse to run), or remove the extension.
 - **Remove everything:** uninstalling the extension deletes all of its stored data from your browser.
 - **Revoke host access:** in `chrome://extensions`, open the extension's details and remove site access.
