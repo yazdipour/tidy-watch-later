@@ -34,7 +34,8 @@ async function renderHome() {
 }
 
 // ---- load saved values
-store.get(["tagList", "base", "model", "apiKey", "tagLimit", "tagRegen", "rlimit", "tagMax", "tagMin", "btlimit", "btSel", "vidTags", "aiQuery", "aiMin", "aiLimit", "syncOn", "syncError"]).then((s) => {
+store.get(["tagList", "base", "model", "apiKey", "tagLimit", "tagRegen", "rlimit", "tagWithin", "btlimit", "btSel", "vidTags", "aiQuery", "aiMin", "aiLimit", "syncOn", "syncError", "tagPrompt"]).then((s) => {
+  q("tagPrompt").value = Tagging.validTemplate(s.tagPrompt) ? s.tagPrompt : Tagging.DEFAULT_TEMPLATE; hintPrompt();
   q("syncOn").checked = !!s.syncOn; renderSync(s.syncError);
   tags = s.tagList || []; renderChips();
   q("base").value = s.base ?? "http://localhost:11434/v1/systemone";
@@ -42,17 +43,26 @@ store.get(["tagList", "base", "model", "apiKey", "tagLimit", "tagRegen", "rlimit
   q("tagLimit").value = s.tagLimit ?? 10;
   q("tagRegen").checked = !!s.tagRegen; q("btlimit").value = s.btlimit ?? 10; picked = new Set(s.btSel || []); vt = s.vidTags || {}; renderPick(); renderHome();
   q("aiQuery").value = s.aiQuery || ""; q("aiMin").value = Math.round((s.aiMin ?? 0.6) * 100); q("aiMinVal").textContent = q("aiMin").value; q("aiLimit").value = s.aiLimit ?? 10;
-  q("tagMax").value = s.tagMax ?? 3; q("tagMin").value = s.tagMin ?? 0.5; q("rlimit").value = s.rlimit ?? 10;
+  q("tagWithin").value = s.tagWithin ?? 40; q("rlimit").value = s.rlimit ?? 10;
 });
 
 // per-page options save on change
 const num = (id, key, min) => q(id).addEventListener("change", () => {
   q(id).value = Math.max(min, Math.floor(+q(id).value || min)); store.set({ [key]: +q(id).value });
 });
-num("tagLimit", "tagLimit", 0); num("aiLimit", "aiLimit", 0); num("rlimit", "rlimit", 0); num("btlimit", "btlimit", 0); num("tagMax", "tagMax", 1);
-q("tagMin").addEventListener("change", () => {
-  q("tagMin").value = Math.min(1, Math.max(0, +q("tagMin").value || 0)); store.set({ tagMin: +q("tagMin").value });
+num("tagLimit", "tagLimit", 0); num("aiLimit", "aiLimit", 0); num("rlimit", "rlimit", 0); num("btlimit", "btlimit", 0);
+q("tagWithin").addEventListener("change", () => {
+  q("tagWithin").value = Math.min(100, Math.max(0, Math.round(+q("tagWithin").value || 0))); store.set({ tagWithin: +q("tagWithin").value });
 });
+// ---- question template: saved as typed; the hint says whether it will be used
+function hintPrompt() {
+  const v = q("tagPrompt").value.trim();
+  q("tagPromptHint").textContent = !v ? "" : Tagging.validTemplate(v) ? "" : "Remove {tag}: tags are sent as choices, so this template is ignored.";
+}
+function savePrompt() { const v = q("tagPrompt").value.trim(); hintPrompt(); store.set({ tagPrompt: v === Tagging.DEFAULT_TEMPLATE ? "" : v }); }
+q("tagPrompt").addEventListener("input", savePrompt);
+q("tagPromptReset").addEventListener("click", () => { q("tagPrompt").value = Tagging.DEFAULT_TEMPLATE; savePrompt(); });
+
 // ---- tag sync (the background worker does the work; this is just the switch)
 const renderSync = (err) => { q("syncStatus").textContent = err ? `Sync problem: ${err}` : ""; };
 q("syncOn").addEventListener("change", () => store.set({ syncOn: q("syncOn").checked, syncError: "" }));
@@ -216,10 +226,11 @@ q("aiMin").addEventListener("input", () => { // the page re-filters instantly fr
   q("aiMinVal").textContent = q("aiMin").value; store.set({ aiMin: +q("aiMin").value / 100 });
 });
 
+let aiRunning = false; // the one AI button doubles as Start / Stop
 function renderAi(r) {
   if (!r || r.state === "idle") return;
   const running = r.state === "running";
-  q("aiGo").hidden = running; q("aiStop").hidden = !running; q("aiBar").hidden = !running;
+  aiRunning = running; q("aiGo").textContent = running ? "Stop" : "Find videos"; q("aiGo").classList.toggle("secondary", running); q("aiGo").disabled = false; q("aiBar").hidden = !running;
   q("aiErr").hidden = r.state !== "error" && !(r.failed && r.warn);
   const tail = r.failed ? ` ${r.failed} failed (will be retried next run).` : "";
   if (running) {
@@ -233,6 +244,7 @@ function renderAi(r) {
   }
 }
 q("aiGo").addEventListener("click", async () => {
+  if (aiRunning) { q("aiGo").disabled = true; q("aiStatus").textContent = "Stopping…"; toContent({ type: "aiStop" }).catch(() => {}); return; }
   const { base, model } = await store.get(["base", "model"]);
   if (!base || !model) { q("aiStatus").textContent = "Set endpoint and model in Settings first."; return; }
   if (!q("aiQuery").value.trim()) { q("aiStatus").textContent = "Describe what you are looking for first."; return; }
@@ -244,7 +256,6 @@ q("aiGo").addEventListener("click", async () => {
     else renderAi({ state: "running", scanned: 0, matches: 0, limit: +q("aiLimit").value });
   } catch (e) { q("aiStatus").textContent = e.message; }
 });
-q("aiStop").addEventListener("click", () => toContent({ type: "aiStop" }).catch(() => {}));
 q("aiClear").addEventListener("click", async () => { await store.set({ aiOn: false }); q("aiStatus").textContent = "Showing all videos."; });
 chrome.runtime.onMessage.addListener((m) => { if (m.aiState) renderAi(m.aiState); });
 toContent({ type: "aiGet" }).then(renderAi).catch(() => {});

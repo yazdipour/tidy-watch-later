@@ -6,7 +6,7 @@ TidySync.createSync({
   onChanged: (fn) => chrome.storage.onChanged.addListener(fn),
 }).start();
 
-const DEF = { base: "http://localhost:11434/v1/systemone", model: "", apiKey: "", tagMax: 3, tagMin: 0.5 };
+const DEF = { base: "http://localhost:11434/v1/systemone", model: "", apiKey: "", tagWithin: 40 };
 
 async function post(url, apiKey, body) {
   let res;
@@ -32,18 +32,20 @@ async function post(url, apiKey, body) {
   return res.json();
 }
 
-// Systemone: POST to the full endpoint URL the user entered, "noul" questions -> answers[name].noul (probability).
-// `criteria` is optional on the server, so it is omitted to save tokens.
+// Systemone: POST to the full endpoint URL the user entered. A question with `criteria` is a "choice"
+// question -> answers[name].probabilities; otherwise a "noul" question -> answers[name].noul (probability).
 const systemone = (s) => async (spec) => {
   const { answers } = await post(s.base, s.apiKey, {
     model: s.model, state: spec.text,
-    questions: Object.fromEntries(spec.questions.map((q) => [q.name, { type: "noul", instructions: q.instructions }])),
+    questions: Object.fromEntries(spec.questions.map((q) => [q.name, q.criteria
+      ? { type: "choice", instructions: q.instructions, criteria: q.criteria }
+      : { type: "noul", instructions: q.instructions }])),
   });
-  return Object.fromEntries(Object.entries(answers).map(([n, a]) => [n, a.noul]));
+  return Object.fromEntries(Object.entries(answers).map(([n, a]) => [n, a.probabilities ?? a.noul]));
 };
 
 const settings = async () => {
-  const s = { ...DEF, ...(await chrome.storage.local.get(["base", "model", "apiKey", "tagMax", "tagMin"])) };
+  const s = { ...DEF, ...(await chrome.storage.local.get(["base", "model", "apiKey", "tagWithin", "tagPrompt"])) };
   s.base = s.base.replace(/\/+$/, "");
   return s;
 };
@@ -55,7 +57,7 @@ async function classify(items, tags) {
   if (!s.model) throw new Error("No model set (Settings tab).");
   const { limits = {} } = await chrome.storage.local.get("limits");
   const r = await Tagging.tagVideos({
-    videos: items, tags, cap: limits[limitKey(s)]?.cap ?? Tagging.DEFAULT_CAP, min: s.tagMin, max: s.tagMax, send: systemone(s),
+    videos: items, tags, cap: limits[limitKey(s)]?.cap ?? Tagging.DEFAULT_CAP, within: s.tagWithin / 100, template: s.tagPrompt, send: systemone(s),
   });
   if (r.capChanged) await chrome.storage.local.set({ limits: { ...limits, [limitKey(s)]: { cap: r.cap } } });
 
@@ -97,7 +99,7 @@ async function testConnection({ base, model, apiKey }) {
 async function planUnit(tags) {
   const s = await settings();
   const { limits = {} } = await chrome.storage.local.get("limits");
-  return Tagging.workUnit(limits[limitKey(s)]?.cap ?? Tagging.DEFAULT_CAP, tags.length);
+  return Tagging.workUnit(limits[limitKey(s)]?.cap ?? Tagging.DEFAULT_CAP, 1);
 }
 
 chrome.runtime.onMessage.addListener((m, _s, send) => {

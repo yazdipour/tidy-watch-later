@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tidy Watch Later",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Tidy your YouTube Watch Later list: delete watched videos, tag and filter them with your own AI model, bulk-delete by tag.",
   "permissions": [
     "activeTab",
