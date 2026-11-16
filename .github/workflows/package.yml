@@ -16,13 +16,15 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME}"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Bad tag: $VERSION"; exit 1; }
+          for n in ${VERSION//./ }; do (( 10#$n <= 65535 )) || { echo "Version part too large: $n"; exit 1; }; done
           npm pkg set version="$VERSION"
           node -e "const fs=require('fs');const m=JSON.parse(fs.readFileSync('manifest.json'));m.version=process.argv[1];fs.writeFileSync('manifest.json',JSON.stringify(m,null,2)+'\n')" "$VERSION"
 
       - name: Package
-        run: zip -r "tidy-watch-later-${GITHUB_REF_NAME}.zip" manifest.json *.js *.css popup.html icons lib
+        run: zip -r "tidy-watch-later-${GITHUB_REF_NAME}.zip" manifest.json *.js *.css popup.html LICENSE icons lib
 
       - uses: actions/upload-artifact@v4
         with:
           name: tidy-watch-later-${{ github.ref_name }}
           path: tidy-watch-later-*.zip
+          overwrite: true
